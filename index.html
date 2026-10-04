@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Shake to charge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg1:#2a1446; --bg2:#14082a;
+    --ink:#fff6ea;
+    --red:#ff3b4e; --green:#2fe07a;
+    --level:0.08;           /* 0..1 */
+    --fill:#ff3b4e;
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  *,*::before,*::after{box-sizing:inherit}
+  html,body{height:100%;margin:0}
+  body{
+    background:radial-gradient(120% 80% at 50% 30%, var(--bg1), var(--bg2));
+    color:var(--ink);
+    font-family:"Unbounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow:hidden;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;-webkit-user-select:none;
+    touch-action:manipulation;
+  }
+  .stage{
+    position:relative;height:100%;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:clamp(20px,4vh,36px);padding:24px;text-align:center;
+  }
+
+  /* ---------- Battery ---------- */
+  .battery-wrap{position:relative;transition:transform .08s}
+  .battery-wrap.shake{animation:jiggle .25s}
+  @keyframes jiggle{
+    0%,100%{transform:rotate(0)}
+    25%{transform:rotate(-6deg) scale(1.03)}
+    75%{transform:rotate(6deg) scale(1.03)}
+  }
+  .battery{
+    position:relative;
+    width:min(46vw,190px);aspect-ratio:1/1.9;
+    border:clamp(6px,1.6vw,9px) solid var(--ink);
+    border-radius:clamp(18px,5vw,30px);
+    padding:clamp(6px,1.6vw,9px);
+    display:flex;align-items:flex-end;
+    box-shadow:0 0 60px -10px var(--fill);
+    transition:box-shadow .3s;
+  }
+  .battery::before{ /* cap */
+    content:"";position:absolute;left:50%;top:calc(-1 * clamp(6px,1.6vw,9px) - clamp(12px,3vw,18px));
+    transform:translateX(-50%);
+    width:38%;height:clamp(12px,3vw,18px);
+    background:var(--ink);border-radius:8px 8px 0 0;
+  }
+  .fill{
+    width:100%;height:calc(var(--level) * 100%);
+    min-height:6%;
+    background:var(--fill);
+    border-radius:clamp(10px,3vw,18px);
+    transition:height .25s ease-out, background-color .3s;
+    position:relative;overflow:hidden;
+  }
+  .fill::after{ /* shine */
+    content:"";position:absolute;inset:0;
+    background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.35) 45%,transparent 60%);
+    transform:translateX(-120%);
+  }
+  .charging .fill::after{animation:shine 1.4s linear infinite}
+  @keyframes shine{to{transform:translateX(120%)}}
+
+  .low .fill{animation:blink 1s steps(2,start) infinite}
+  @keyframes blink{50%{opacity:.25}}
+
+  .bolt{
+    position:absolute;inset:0;display:grid;place-items:center;
+    font-size:clamp(40px,12vw,64px);
+    opacity:0;transform:scale(.6);transition:.3s;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,.4));
+    pointer-events:none;
+  }
+  .charging .bolt{opacity:1;transform:scale(1)}
+
+
+  /* ---------- Button ---------- */
+  .btn{
+    font:inherit;font-weight:800;font-size:clamp(18px,5vw,22px);
+    color:#1b0d2e;background:var(--ink);
+    border:none;border-radius:999px;
+    padding:18px 44px;cursor:pointer;
+    box-shadow:0 6px 0 #c9b9a4, 0 14px 30px -8px rgba(0,0,0,.5);
+    transition:transform .1s, box-shadow .1s, opacity .3s;
+  }
+  .btn:active{transform:translateY(4px);box-shadow:0 2px 0 #c9b9a4, 0 6px 16px -8px rgba(0,0,0,.5)}
+  .btn:focus-visible{outline:3px solid var(--green);outline-offset:4px}
+  .btn[hidden]{display:none}
+
+  /* ---------- Emojis ---------- */
+  .emoji{
+    position:fixed;pointer-events:none;z-index:5;
+    font-size:var(--s,40px);line-height:1;
+    animation:fly var(--d,1.2s) cubic-bezier(.2,.7,.3,1) forwards;
+    will-change:transform,opacity;
+  }
+  @keyframes fly{
+    0%{transform:translate(-50%,-50%) scale(.2) rotate(0);opacity:0}
+    15%{opacity:1}
+    100%{transform:translate(calc(-50% + var(--x)),calc(-50% + var(--y))) scale(1) rotate(var(--r));opacity:0}
+  }
+
+  .done .battery{animation:pop .5s}
+  @keyframes pop{50%{transform:scale(1.12)}}
+
+  @media (prefers-reduced-motion:reduce){
+    .low .fill,.charging .fill::after,.battery-wrap.shake{animation:none}
+  }
+</style>
+</head>
+<body>
+<main class="stage" id="stage">
+  <div class="battery-wrap low" id="wrap">
+    <div class="battery">
+      <div class="fill" id="fill"></div>
+      <div class="bolt">⚡</div>
+    </div>
+  </div>
+
+
+  <button class="btn" id="btn">Charge</button>
+</main>
+
+<script>
+(() => {
+  const root = document.documentElement;
+  const wrap = document.getElementById('wrap');
+  const fillEl = document.getElementById('fill');
+  const btn = document.getElementById('btn');
+
+  const START = 0.08;
+  let level = START;
+  let charging = false;
+  let finished = false;
+  let lastShake = 0;
+  let lastAcc = null;
+
+  const EMOJIS = ['⚡','🔋','🤪','🥳','😜','🔥','💥','✨','🤯','😎','🚀','🎉','💪','🙃','🌈','🍕','👀','🦄','🐸','💫','😵‍💫','🫨','🤸','🌟'];
+  const FINAL = ['🎉','🥳','✅','💚','🔋','✨','🚀','🌟'];
+
+  // red -> orange -> yellow -> green
+  function colorFor(l){
+    const stops = [
+      [0,   [255, 59, 78]],
+      [0.4, [255,149, 48]],
+      [0.7, [255,214, 64]],
+      [1,   [ 47,224,122]]
+    ];
+    for (let i = 1; i < stops.length; i++){
+      if (l <= stops[i][0]){
+        const [a, ca] = stops[i-1], [b, cb] = stops[i];
+        const t = (l - a) / (b - a);
+        const c = ca.map((v, k) => Math.round(v + (cb[k] - v) * t));
+        return `rgb(${c[0]},${c[1]},${c[2]})`;
+      }
+    }
+    return 'rgb(47,224,122)';
+  }
+
+  function render(){
+    root.style.setProperty('--level', level);
+    root.style.setProperty('--fill', colorFor(level));
+    wrap.classList.toggle('low', level < 0.2 && !finished);
+  }
+
+  function spawnEmoji(set = EMOJIS, burst = false){
+    const rect = wrap.getBoundingClientRect();
+    const el = document.createElement('span');
+    el.className = 'emoji';
+    el.textContent = set[Math.floor(Math.random() * set.length)];
+    const angle = Math.random() * Math.PI * 2;
+    const dist = (burst ? 180 : 120) + Math.random() * Math.min(window.innerWidth, 500) * 0.45;
+    el.style.left = (rect.left + rect.width / 2) + 'px';
+    el.style.top  = (rect.top + rect.height / 2) + 'px';
+    el.style.setProperty('--x', Math.cos(angle) * dist + 'px');
+    el.style.setProperty('--y', Math.sin(angle) * dist + 'px');
+    el.style.setProperty('--r', (Math.random() * 720 - 360) + 'deg');
+    el.style.setProperty('--s', (28 + Math.random() * 30) + 'px');
+    el.style.setProperty('--d', (0.9 + Math.random() * 0.8) + 's');
+    document.body.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+  }
+
+  function onShake(power){
+    if (!charging || finished) return;
+    const now = performance.now();
+    if (now - lastShake < 90) return;
+    lastShake = now;
+
+    level = Math.min(1, level + 0.012 + Math.min(power, 40) * 0.0012);
+    render();
+
+    wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake');
+    const n = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) spawnEmoji();
+    if (navigator.vibrate) navigator.vibrate(15);
+
+
+    if (level >= 1) finish();
+  }
+
+  function finish(){
+    finished = true; charging = false;
+    wrap.classList.remove('charging');
+    wrap.classList.add('done');
+    for (let i = 0; i < 28; i++) setTimeout(() => spawnEmoji(FINAL, true), i * 35);
+    if (navigator.vibrate) navigator.vibrate([60, 40, 120]);
+    btn.textContent = 'Charge';
+    btn.hidden = false;
+  }
+
+  function reset(){
+    level = START; finished = false; charging = false;
+    wrap.classList.remove('done','charging');
+    btn.textContent = 'Charge';
+    render();
+  }
+
+  // ----- Motion (phone shake) -----
+  function handleMotion(e){
+    const a = e.accelerationIncludingGravity || e.acceleration;
+    if (!a || a.x == null) return;
+    if (lastAcc){
+      const delta = Math.abs(a.x - lastAcc.x) + Math.abs(a.y - lastAcc.y) + Math.abs(a.z - lastAcc.z);
+      if (delta > 14) onShake(delta);
+    }
+    lastAcc = { x: a.x, y: a.y, z: a.z };
+  }
+
+  // ----- Fallback for desktop: fast mouse wiggling also charges -----
+  let lastMouse = null;
+  window.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'mouse') return;
+    if (lastMouse){
+      const speed = Math.hypot(e.clientX - lastMouse.x, e.clientY - lastMouse.y);
+      if (speed > 45) onShake(speed / 4);
+    }
+    lastMouse = { x: e.clientX, y: e.clientY };
+  });
+
+  async function startCharging(){
+    if (finished) reset();
+
+    // iOS 13+ needs explicit permission
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function'){
+      try{
+        const res = await DeviceMotionEvent.requestPermission();
+        if (res !== 'granted'){
+          return;
+        }
+      }catch(err){
+        return;
+      }
+    }
+    window.addEventListener('devicemotion', handleMotion);
+
+    charging = true;
+    btn.hidden = true;
+    wrap.classList.add('charging');
+    for (let i = 0; i < 6; i++) setTimeout(() => spawnEmoji(['⚡','🔋']), i * 60);
+  }
+
+  btn.addEventListener('click', startCharging);
+  render();
+})();
+</script>
+</body>
+</html>
